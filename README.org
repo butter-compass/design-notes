@@ -1,0 +1,258 @@
+* What is Butter Compass?
+  
+  *Note: none of this is set in stone - it's all open for discussion*
+
+  Butter Compass (other than being a tool to find butter) provides a
+  system for running and managing functions that respond to events,
+  built on top of OpenShift Enterprise v3.
+
+** Rationale
+
+   Enterprises may already have a rich set of disparate events that
+   they want to react to. This would provide a way to funnel those
+   events into a consistent set of streams, and allow attaching simple
+   functional units to the streams. It would prevent the enterprise
+   from having to cobble their own system to handle events, and would
+   allow the functions to be written in one of several languages (with
+   open extension points to support other languages).
+
+** What isn't Butter Compass?
+
+   - Not a per-cycle cost-saving tool
+   - Not a strict resource limiting tool
+
+* Deployment structure
+
+  Jar or Zip containing the function and the function's
+  dependencies. The archive could contain multiple functions - each
+  one would need to be provided a descriptor to wire it up.
+
+** Descriptor
+
+   Defines how the fn should be deployed/wired/limited. Is provided
+   along with the deploy, or provided after the fact to set/alter the
+   wiring.
+
+   The example is yaml, but that decision (or any decision, really)
+   hasn't been fixed (hand-writing json sure is godawful though).
+
+#+BEGIN_SRC yaml
+  # a single descriptor can wire multiple fns
+  platform: node # or java, etc
+  name: foo
+  description: yada yada # optional?
+  - fn: org.blah.Blah # a platform-specific locator for the function
+    bindings: # one of route, timer, or streams is required
+      # route from web request to this fn
+      route: /foo
+      # or call on a schedule
+      timer: <cron-spec>
+      # or attach to these streams
+      streams:
+        - address-1
+        - address-2
+      # write the return value of the fn to a stream - optional
+      out: address-3
+    limits:
+      # resource limits here - TBD
+#+END_SRC
+
+* System structure
+
+  Note: This is purely conceptual - all of the components would likely
+  be running in the same container mananger (kube), and the deployer,
+  timer service, web ui, etc may be functions themselves,
+  communicating with other components via the broker.
+
+  [[./imgs/butter-compass-overview.png]]
+
+** Broker
+   
+   delivers events to the appropriate addresses
+
+   built with: vert.x EB, ActiveMQ, ?
+
+   
+** Translator
+
+   maps external events within the enterprise onto the broker (and
+   viceversa)
+   
+   built with: Camel?
+
+** Timer Service
+
+   emits timer-based events on the requested schedules to the
+   requested streams
+
+   wrapper around Quartz (immutant scheduling)?
+
+** fn-container (fnbox?)
+
+   wraps a function, mapping events into the native event format, and
+   provides an environment/context for the fn to communicate out with
+
+   one impl. per platform/language, as a docker container
+
+** Load Monitor
+
+   watches the load on the streams and the fn-containers to
+   determine when new fn-containers need to be launched, or extra
+   ones need to be killed
+
+   built from scratch, feeding data to kube
+
+** Container Manager
+
+   Manages creating/destroying/monitoring fn-containers
+
+   kube, basically
+
+
+** Web Gateway
+   converts web requests into request-response  events to be
+   handled by a fn. Would also handle web auth.
+
+   APIMan, with plugin to convert requests into request-response
+   events. Or can camel do this as well?
+
+** Deployer
+
+   handles setting up the build for the fn-container, and
+   wires up the streams and gateway route (if the fn is a web fn)
+   based on the deployment it is given
+
+   scratch-made biscuit
+
+** Tracer
+
+   Traces events from entry to exit/completion, providing
+   timing data
+
+  - web-ui: gives a ui for deployment, management, and visibility
+
+** Logger
+
+   Collects logging info from functions
+
+** Web UI
+
+   Provides a UI into trace, log, and deployment.
+
+
+* fn API
+
+** Event structure
+
+   An event will consist of metadata and the event data, translated
+   into an appropriate data structure for the platform. 
+   
+   Metadata may include:
+   
+   - event id
+   - source stream id
+   - tracing identifiers
+   - response stream id (if request-response)
+   - ttl + start time (after which the event is no longer valid, and,
+     if a request-response message, the client has given up).
+   - http headers (if a web request)
+
+  The function API will differ depending on the platform to provide an
+  idiomatic interface. 
+
+  Each function will be given the event and a context that allows
+  interaction with the system environment (generating other events,
+  querying for the remaining ttl, logging).
+
+  Possible js API:
+
+#+BEGIN_SRC javascript
+  exports.foo = function(event, context, callback) {
+      context.log("Handling event: " + event.id);
+      
+      if (event.data.somevalue) {
+
+          // send a message and expect a response
+          // .send will set appropriate metadata, including parent tracing
+          // ids from event, and updated ttl(?)
+          // TODO: needs some way to set additional metadata?
+          context.send("somestream", {foo: "bar"}, function(err, ev) {
+              // signal completion using the callback
+              callback(err, ev.data)
+          });
+
+          // fire and forget
+          context.send("anotherstream", someData);
+          
+      } else {
+          callback(null, some_other_reply)
+      }
+  }
+
+#+END_SRC
+
+#+BEGIN_SRC java
+  public class Whatever {
+      // return anything jacksonable?
+      public static String handleSomething(Event event, Context ctx) {
+          ctx.log().info("Handing event: " + event.id);
+
+          final Event downstreamEvent = ctx.createEvent();
+          downstreamEvent.put("foo", "bar");
+
+          // FIXME: this is sync, and far from correct
+          if (event.data().getBoolean("somevalue", false)) {
+              // fire and forget
+              ctx.send("anotherstream", someData);
+              
+              return ctx.sendSync("somestream", downstreamEvent).data();
+          } else {
+              return aDefaultResponse;
+          }
+      }
+  }
+
+#+END_SRC
+
+* State
+
+** fn State
+   
+   Functions can't rely on any local state (disk, memory). Any storage
+   has to be in an external system.
+
+** System State
+   
+   Each component in BC should be as stateless as possible,
+   pulling/storing all state elsewhere (etcd?). 
+
+* Prior Art
+
+  Draws inspiration from:
+
+  - [[https://aws.amazon.com/lambda/][AWS Lambda]]
+  - [[https://azure.microsoft.com/en-us/services/functions/][Azure Functions]]
+  - [[https://new-console.ng.bluemix.net/openwhisk/][IBM BlueMix OpenWhisk]]
+  - ??
+
+* Random notes
+
+** Events are ephemeral - if no fn is registered to process it, it's gone
+
+** Event Streams are broadcast - every fn attached to the stream will get the message
+
+   Note that only /one/ instance of the fn will receive the message
+
+** Metrics - what do we need beyond tracing?
+
+** =context= needs circuit-breaker support for sends
+
+   This means a central location to store the state of those breakers
+
+** How are fns tested locally, since they require a =context=?
+
+** If the broker supported STOMP, that would make building platform impls simpler
+
+** build for failure - don't ever assume a clean shutdown of any component
+
+** what about authn/authz? Keycloak at the gateway, but how to authorize what events a fn can see?
