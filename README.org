@@ -23,7 +23,7 @@
 
 * Deployment structure
 
-  Jar or Zip containing the function and the function's
+  Jar or zip containing the function and the function's
   dependencies. The archive could contain multiple functions - each
   one would need to be provided a descriptor to wire it up.
 
@@ -62,7 +62,9 @@
   Note: This is purely conceptual - all of the components would likely
   be running in the same container mananger (kube), and the deployer,
   timer service, web ui, etc may be functions themselves,
-  communicating with other components via the broker.
+  communicating with other components via the broker. This would also
+  vet the implementation as it is being built, since these would be
+  non-trivial functions.
 
   [[./imgs/butter-compass-overview.png]]
 
@@ -190,6 +192,8 @@
   }
 
 #+END_SRC
+
+  Possible, crappy, java API:
 
 #+BEGIN_SRC java
   public class Whatever {
