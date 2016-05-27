@@ -55,7 +55,7 @@
       # or attach to these streams
       streams:
         - name: address-1
-          offset: 42 # optional, one of first, latest, or number
+          offset: 42 # optional, one of first, latest, or number. defaults to latest
         - name: address-2 # can bind to multple streams
       # write the return value of the fn to a stream - optional
       out: address-3
