@@ -6,20 +6,23 @@
   system for running and managing functions that respond to events,
   built on top of OpenShift Enterprise v3.
 
-** Rationale
+  The events are persistent, so functions can be deployed to process
+  one or more streams starting with the most recent and all future
+  messages, or at any offset in the stream.
 
-   Enterprises may already have a rich set of disparate events that
-   they want to react to. This would provide a way to funnel those
-   events into a consistent set of streams, and allow attaching simple
-   functional units to the streams. It would prevent the enterprise
-   from having to cobble their own system to handle events, and would
-   allow the functions to be written in one of several languages (with
-   open extension points to support other languages).
+  Functions can be written in any supported language, which would
+  initially include Java (and other JVM langs), JS, possibly Python or
+  Ruby, possibly Rust or Swift.
+
+  Butter Compass is based on a synthesis of the goals of lambda
+  systems, EIP systems, event sourcing, and is somewhat between SaaS
+  and PaaS (can be thought of as a higher-level PaaS, perhaps).
 
 ** What isn't Butter Compass?
 
    - Not a per-cycle cost-saving tool
    - Not a strict resource limiting tool
+   - Not a general web/API platform
 
 * Deployment structure
 
@@ -44,13 +47,16 @@
   - fn: org.blah.Blah # a platform-specific locator for the function
     bindings: # one of route, timer, or streams is required
       # route from web request to this fn
-      route: /foo
+      route:
+        context: /foo
+        stream: foo # auto bind to this stream
       # or call on a schedule
       timer: <cron-spec>
       # or attach to these streams
       streams:
-        - address-1
-        - address-2
+        - name: address-1
+          offset: 42 # optional, one of first, latest, or number
+        - name: address-2 # can bind to multple streams
       # write the return value of the fn to a stream - optional
       out: address-3
     limits:
@@ -68,26 +74,26 @@
 
   [[./imgs/butter-compass-overview.png]]
 
-** Broker
+** Event Broker
    
-   delivers events to the appropriate addresses
+   Stores/delivers events
 
-   built with: vert.x EB, ActiveMQ, ?
+   built with: Kafka ?
 
    
-** Translator
+** Event Bridge
 
    maps external events within the enterprise onto the broker (and
    viceversa)
    
-   built with: Camel?
+   built with: Camel ?
 
 ** Timer Service
 
    emits timer-based events on the requested schedules to the
    requested streams
 
-   wrapper around Quartz (immutant scheduling)?
+   wrapper around Quartz (immutant scheduling), Camel timer?
 
 ** fn-container (fnbox?)
 
@@ -110,7 +116,6 @@
 
    kube, basically
 
-
 ** Web Gateway
    converts web requests into request-response  events to be
    handled by a fn. Would also handle web auth.
@@ -130,8 +135,6 @@
 
    Traces events from entry to exit/completion, providing
    timing data
-
-  - web-ui: gives a ui for deployment, management, and visibility
 
 ** Logger
 
@@ -153,6 +156,7 @@
    
    - event id
    - source stream id
+   - stream offset (stream id + offset may be enough to replace event id)
    - tracing identifiers
    - response stream id (if request-response)
    - ttl + start time (after which the event is no longer valid, and,
@@ -174,17 +178,17 @@
       
       if (event.data.somevalue) {
 
-          // send a message and expect a response
-          // .send will set appropriate metadata, including parent tracing
+          // emit an event and expect a response event
+          // .emit will set appropriate metadata, including parent tracing
           // ids from event, and updated ttl(?)
           // TODO: needs some way to set additional metadata?
-          context.send("somestream", {foo: "bar"}, function(err, ev) {
+          context.emit("somestream", {foo: "bar"}, function(err, ev) {
               // signal completion using the callback
               callback(err, ev.data)
           });
 
           // fire and forget
-          context.send("anotherstream", someData);
+          context.emit("anotherstream", someData);
           
       } else {
           callback(null, some_other_reply)
@@ -207,9 +211,9 @@
           // FIXME: this is sync, and far from correct
           if (event.data().getBoolean("somevalue", false)) {
               // fire and forget
-              ctx.send("anotherstream", someData);
+              ctx.emit("anotherstream", someData);
               
-              return ctx.sendSync("somestream", downstreamEvent).data();
+              return ctx.emitSync("somestream", downstreamEvent).data();
           } else {
               return aDefaultResponse;
           }
@@ -228,7 +232,21 @@
 ** System State
    
    Each component in BC should be as stateless as possible,
-   pulling/storing all state elsewhere (etcd?). 
+   pulling/storing all state elsewhere (etcd?). The Event broker
+   itself will need reliable storage for the event streams.
+
+* Challenges
+
+  - figuring out a way to handle fn's in a resource efficient
+    manner. For JVM-based fns, if every fn gets a JVM, that can eat a
+    lot of memory, and that's just one resource concern.
+  - per-address authorization
+  - giving users adequate testing tools w/o requiring a running system
+  - making the fn-container interface simple enough to make an
+    implementation for a new platform straightforward
+  
+* Potential uses
+
 
 * Prior Art
 
@@ -237,26 +255,26 @@
   - [[https://aws.amazon.com/lambda/][AWS Lambda]]
   - [[https://azure.microsoft.com/en-us/services/functions/][Azure Functions]]
   - [[https://new-console.ng.bluemix.net/openwhisk/][IBM BlueMix OpenWhisk]]
-  - ??
+  - [[https://servicemix.apache.org/][Apache ServiceMix]]
+  - [[http://debezium.io/][Debezium]] (mostly its original incarnation)
 
 * Random notes
-
-** Events are ephemeral - if no fn is registered to process it, it's gone
-
-** Event Streams are broadcast - every fn attached to the stream will get the message
-
-   Note that only /one/ instance of the fn will receive the message
-
-** Metrics - what do we need beyond tracing?
-
-** =context= needs circuit-breaker support for sends
-
-   This means a central location to store the state of those breakers
-
-** How are fns tested locally, since they require a =context=?
-
-** If the broker supported STOMP, that would make building platform impls simpler
-
-** build for failure - don't ever assume a clean shutdown of any component
-
-** what about authn/authz? Keycloak at the gateway, but how to authorize what events a fn can see?
+  - The Web Gateway is for triggering events, it's not designed for
+    full-blown web applications/APIs (unless the payloads the API
+    traffics is fairly small).
+  - Event Streams are broadcast - every fn attached to the stream will
+    get the message.  Note that only /one/ instance of the fn will
+    receive the message
+  - Metrics - what do we need beyond tracing?
+  - =context= needs circuit-breaker support for =emit=s.  This means a
+    central location to store the state of those breakers
+  - How are fns tested locally, since they require a =context=?
+  - If the broker supported STOMP, that would make building platform
+    impls simpler
+  - build for failure - don't ever assume a clean shutdown of any
+    component
+  - what about authn/authz? Keycloak at the gateway, but how to
+    authorize what events a fn can see?
+  - given the setup difficultly (requiring OSE, many moving parts),
+    this would probably be straight to product if built
+  - what about back-pressure?
