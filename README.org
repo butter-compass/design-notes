@@ -15,8 +15,9 @@
   Ruby, possibly Rust or Swift.
 
   Butter Compass is based on a synthesis of the goals of lambda
-  systems, EIP systems, event sourcing, and is somewhat between SaaS
-  and PaaS (can be thought of as a higher-level PaaS, perhaps).
+  systems, EIP systems, and event processing, and is somewhat between
+  SaaS and PaaS (can be thought of as a higher-level PaaS, perhaps)
+  (see the [[*Prior%20Art][Prior Art]] section below).
 
 ** What isn't Butter Compass?
 
@@ -247,6 +248,7 @@
   
 * Potential uses
 
+  - ??
 
 * Prior Art
 
