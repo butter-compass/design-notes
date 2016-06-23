@@ -25,45 +25,6 @@
    - Not a strict resource limiting tool
    - Not a general web/API platform
 
-* Deployment structure
-
-  Jar or zip containing the function and the function's
-  dependencies. The archive could contain multiple functions - each
-  one would need to be provided a descriptor to wire it up.
-
-** Descriptor
-
-   Defines how the fn should be deployed/wired/limited. Is provided
-   along with the deploy, or provided after the fact to set/alter the
-   wiring.
-
-   The example is yaml, but that decision (or any decision, really)
-   hasn't been fixed (hand-writing json sure is godawful though).
-
-#+BEGIN_SRC yaml
-  # a single descriptor can wire multiple fns
-  platform: node # or java, etc
-  name: foo
-  description: yada yada # optional?
-  - fn: org.blah.Blah # a platform-specific locator for the function
-    bindings: # one of route, timer, or streams is required
-      # route from web request to this fn
-      route:
-        context: /foo
-        stream: foo # auto bind to this stream
-      # or call on a schedule
-      timer: <cron-spec>
-      # or attach to these streams
-      streams:
-        - name: address-1
-          offset: 42 # optional, one of first, latest, or number. defaults to latest
-        - name: address-2 # can bind to multple streams
-      # write the return value of the fn to a stream - optional
-      out: address-3
-    limits:
-      # resource limits here - TBD
-#+END_SRC
-
 * System structure
 
   Note: This is purely conceptual - all of the components would likely
@@ -115,7 +76,8 @@
 
    Manages creating/destroying/monitoring fn-containers
 
-   kube, basically
+   kube + some more efficient way to handle multiple function
+   instances (see [[*Challenges][Challenges]] below)
 
 ** Web Gateway
    converts web requests into request-response  events to be
@@ -144,6 +106,45 @@
 ** Web UI
 
    Provides a UI into trace, log, and deployment.
+
+* Deployment structure
+
+  Jar or zip containing the function and the function's
+  dependencies. The archive could contain multiple functions - each
+  one would need to be provided a descriptor to wire it up.
+
+** Descriptor
+
+   Defines how the fn should be deployed/wired/limited. Is provided
+   along with the deploy, or provided after the fact to set/alter the
+   wiring.
+
+   The example is yaml, but that decision (or any decision, really)
+   hasn't been fixed (hand-writing json sure is godawful though).
+
+#+BEGIN_SRC yaml
+  # a single descriptor can wire multiple fns
+  platform: node # or java, etc
+  name: foo
+  description: yada yada # optional?
+  - fn: org.blah.Blah # a platform-specific locator for the function
+    bindings: # one of route, timer, or streams is required
+      # route from web request to this fn
+      route:
+        context: /foo
+        stream: foo # auto bind to this stream
+      # or call on a schedule
+      timer: <cron-spec>
+      # or attach to these streams
+      streams:
+        - name: address-1
+          offset: 42 # optional, one of first, latest, or number. defaults to latest
+        - name: address-2 # can bind to multple streams
+      # write the return value of the fn to a stream - optional
+      out: address-3
+    limits:
+      # resource limits here - TBD
+#+END_SRC
 
 
 * fn API
@@ -241,11 +242,19 @@
   - figuring out a way to handle fn's in a resource efficient
     manner. For JVM-based fns, if every fn gets a JVM, that can eat a
     lot of memory, and that's just one resource concern.
+  - some non-AWS lambda systems assume a docker container per function
+    instance, which is terribly wasteful - for this to succeed, it
+    needs to have a unit of deployment that is more granular
   - per-address authorization
   - giving users adequate testing tools w/o requiring a running system
   - making the fn-container interface simple enough to make an
     implementation for a new platform straightforward
-  
+  - if Kafka is used as the broker, we would have to deal with the
+    challenges of running a stable Kafka cluster on OpenShift, but
+    others are working on that
+  - bindings/deployment for each language should meet the language on
+    its terms - don't force maven or any other alien tool
+
 * Potential uses
 
   - ??
@@ -258,9 +267,10 @@
   - [[https://azure.microsoft.com/en-us/services/functions/][Azure Functions]]
   - [[https://new-console.ng.bluemix.net/openwhisk/][IBM BlueMix OpenWhisk]]
   - [[https://servicemix.apache.org/][Apache ServiceMix]]
-  - [[http://debezium.io/][Debezium]] (mostly its original incarnation)
+  - [[http://debezium.io/][Debezium]] (its original incarnation)
 
 * Random notes
+
   - The Web Gateway is for triggering events, it's not designed for
     full-blown web applications/APIs (unless the payloads the API
     traffics is fairly small).
@@ -268,8 +278,8 @@
     get the message.  Note that only /one/ instance of the fn will
     receive the message
   - Metrics - what do we need beyond tracing?
-  - =context= needs circuit-breaker support for =emit=s.  This means a
-    central location to store the state of those breakers
+  - =context= needs circuit-breaker support for =emit= calls.  This
+    means a central location to store the state of those breakers
   - How are fns tested locally, since they require a =context=?
   - If the broker supported STOMP, that would make building platform
     impls simpler
