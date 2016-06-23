@@ -84,7 +84,7 @@
    handled by a fn. Would also handle web auth.
 
    APIMan, with plugin to convert requests into request-response
-   events. Or can camel do this as well?
+   events. Or can camel do this as well? (I guess not APIMan now, ffs)
 
 ** Deployer
 
